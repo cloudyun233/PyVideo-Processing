@@ -1,3 +1,4 @@
+# video_playback.py
 import cv2
 import os
 from PyQt5.QtCore import QObject, pyqtSignal

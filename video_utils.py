@@ -1,3 +1,4 @@
+# video_utils.py
 import cv2
 import os
 from PyQt5.QtGui import QImage, QPixmap
