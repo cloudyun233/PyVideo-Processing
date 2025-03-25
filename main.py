@@ -14,13 +14,14 @@ from video_playback import VideoPlayback
 from video_recorder import VideoRecorder
 from video_utils import VideoUtils
 from video_analyzer import VideoAnalyzer
+from video_player_window import VideoPlayerWindow
 
 
 class VideoStreamApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("视频流处理应用")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 800, 600)
 
         # 初始化组件
         self.video_processor = VideoProcessor()
@@ -43,6 +44,9 @@ class VideoStreamApp(QMainWindow):
         # 创建状态标签，以便回调函数可以使用
         self.status_label = QLabel("状态：就绪")
         
+        # 视频播放窗口
+        self.player_window = None
+        
         # 初始化UI
         self.init_ui()
         
@@ -63,11 +67,10 @@ class VideoStreamApp(QMainWindow):
         # 主窗口设置
         main_widget = QWidget(self)
         self.setCentralWidget(main_widget)
-        main_layout = QHBoxLayout(main_widget)
+        main_layout = QVBoxLayout(main_widget)
 
-        # 左侧控制面板
+        # 控制面板
         control_widget = QWidget()
-        control_widget.setFixedWidth(300)
         control_layout = QVBoxLayout(control_widget)
 
         # 使用选项卡组织功能
@@ -104,66 +107,6 @@ class VideoStreamApp(QMainWindow):
         control_layout.addWidget(self.status_label)
         
         main_layout.addWidget(control_widget)
-
-        # 右侧视频预览窗口 - 单窗口模式
-        self.video_widget = QWidget()
-        self.video_layout = QVBoxLayout(self.video_widget)
-        
-        # 视频显示标签
-        self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(800, 600)
-        self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.video_layout.addWidget(self.video_label)
-
-        # 播放控制
-        self.playback_controls = QWidget()
-        self.playback_layout = QHBoxLayout(self.playback_controls)
-        self.play_btn = QPushButton("播放", clicked=self.play_video)
-        self.pause_btn = QPushButton("暂停", clicked=self.pause_video)
-        self.stop_playback_btn = QPushButton("停止", clicked=self.stop_playback)
-        self.seek_slider = QSlider(Qt.Horizontal)
-        self.seek_slider.sliderMoved.connect(self.seek_video)
-        self.playback_layout.addWidget(self.play_btn)
-        self.playback_layout.addWidget(self.pause_btn)
-        self.playback_layout.addWidget(self.stop_playback_btn)
-        self.playback_layout.addWidget(self.seek_slider)
-        self.video_layout.addWidget(self.playback_controls)
-        self.playback_controls.hide()
-        
-        # 右侧视频预览窗口 - 双窗口模式
-        self.video_splitter = QSplitter(Qt.Horizontal)
-        self.video_splitter.setHandleWidth(10)
-        
-        # 左侧原始视频窗口
-        self.original_video_widget = QWidget()
-        self.original_video_layout = QVBoxLayout(self.original_video_widget)
-        self.original_video_label = QLabel()
-        self.original_video_label.setAlignment(Qt.AlignCenter)
-        self.original_video_label.setMinimumSize(400, 600)
-        self.original_video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.original_video_layout.addWidget(self.original_video_label)
-        self.original_video_layout.addWidget(QLabel("原始视频"))
-        
-        # 右侧分析后视频窗口
-        self.analyzed_video_widget = QWidget()
-        self.analyzed_video_layout = QVBoxLayout(self.analyzed_video_widget)
-        self.analyzed_video_label = QLabel()
-        self.analyzed_video_label.setAlignment(Qt.AlignCenter)
-        self.analyzed_video_label.setMinimumSize(400, 600)
-        self.analyzed_video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.analyzed_video_layout.addWidget(self.analyzed_video_label)
-        self.analyzed_video_layout.addWidget(QLabel("分析后视频"))
-        
-        # 添加到分割器
-        self.video_splitter.addWidget(self.original_video_widget)
-        self.video_splitter.addWidget(self.analyzed_video_widget)
-        self.video_splitter.setSizes([400, 400])
-        self.video_splitter.hide()
-        
-        # 添加到主布局
-        main_layout.addWidget(self.video_widget)
-        main_layout.addWidget(self.video_splitter)
 
     def init_camera_tab(self, layout):
         # 摄像头设置组
@@ -326,6 +269,19 @@ class VideoStreamApp(QMainWindow):
             fps = int(self.fps_combo.currentText())
             
             if self.video_recorder.start_preview(camera_index, width, height, fps):
+                # 创建播放窗口（如果不存在）
+                if not self.player_window:
+                    self.player_window = VideoPlayerWindow(self)
+                    self.player_window.set_button_callbacks(
+                        play_callback=self.play_video,
+                        pause_callback=self.pause_video,
+                        stop_callback=self.stop_preview,
+                        seek_callback=lambda x: None  # 摄像头预览不需要进度条功能
+                    )
+                
+                # 显示播放窗口
+                self.player_window.show()
+                
                 self.start_preview_btn.setEnabled(False)
                 self.stop_preview_btn.setEnabled(True)
                 self.start_record_btn.setEnabled(True)
@@ -337,7 +293,11 @@ class VideoStreamApp(QMainWindow):
         """停止摄像头预览"""
         self.video_recorder.stop_preview()
         self.timer.stop()
-        self.video_label.clear()
+        
+        # 隐藏播放窗口但不关闭它
+        if self.player_window:
+            self.player_window.hide()
+            
         self.start_preview_btn.setEnabled(True)
         self.stop_preview_btn.setEnabled(False)
         self.start_record_btn.setEnabled(False)
@@ -381,8 +341,9 @@ class VideoStreamApp(QMainWindow):
                 self.stop_playback()
                 return
             else:
-                # 更新进度条
-                self.seek_slider.setValue(self.video_playback.get_position())
+                # 更新播放窗口的进度条
+                if self.player_window:
+                    self.player_window.set_slider_value(self.video_playback.get_position())
         
         # 如果没有帧可显示，直接返回
         if original_frame is None:
@@ -393,35 +354,24 @@ class VideoStreamApp(QMainWindow):
         if self.analyzing and original_frame is not None:
             analyzed_frame = self.video_analyzer.analyze_frame(original_frame)
         
-        # 根据窗口模式显示帧
+        # 根据窗口模式和分析状态显示帧
         if self.window_mode == "dual" and analyzed_frame is not None:
             # 双窗口模式：左侧显示原始帧，右侧显示分析后的帧
-            self.display_camera_frame(original_frame)
+            if self.player_window:
+                self.player_window.display_frame(original_frame)
             self.display_analyzed_frame(analyzed_frame)
         else:
             # 单窗口模式：如果正在分析，显示分析后的帧；否则显示原始帧
             if self.analyzing and analyzed_frame is not None:
-                self.display_camera_frame(analyzed_frame)
+                if self.player_window:
+                    self.player_window.display_frame(analyzed_frame)
             else:
-                self.display_camera_frame(original_frame)
+                if self.player_window:
+                    self.player_window.display_frame(original_frame)
 
-    def display_frame(self, frame):
-        """显示视频帧（单窗口模式）"""
-        if frame is not None:
-            pixmap = self.utils.convert_frame_to_pixmap(frame, self.video_label.size())
-            if pixmap:
-                self.video_label.setPixmap(pixmap)
-    
-    def display_original_frame(self, frame):
-        """显示原始帧（双窗口模式下的左侧窗口）"""
-        if frame is not None:
-            pixmap = self.utils.convert_frame_to_pixmap(frame, self.original_video_label.size())
-            if pixmap:
-                self.original_video_label.setPixmap(pixmap)
-    
     def display_analyzed_frame(self, frame):
         """显示分析后的帧（双窗口模式下的右侧窗口）"""
-        if frame is not None:
+        if frame is not None and self.window_mode == "dual":
             pixmap = self.utils.convert_frame_to_pixmap(frame, self.analyzed_video_label.size())
             if pixmap:
                 self.analyzed_video_label.setPixmap(pixmap)
@@ -431,22 +381,26 @@ class VideoStreamApp(QMainWindow):
         if frame is not None:
             # 根据窗口模式决定如何显示
             if self.window_mode == "dual" and self.analyzing:
-                self.display_original_frame(frame)
+                if self.player_window:
+                    self.player_window.display_frame(frame)
                 analyzed = self.video_analyzer.analyze_frame(frame)
                 self.display_analyzed_frame(analyzed)
             else:
-                self.display_frame(frame)
+                if self.player_window:
+                    self.player_window.display_frame(frame)
     
     def display_playback_frame(self, frame):
         """显示回放帧"""
         if frame is not None:
             # 根据窗口模式决定如何显示
             if self.window_mode == "dual" and self.analyzing:
-                self.display_original_frame(frame)
+                if self.player_window:
+                    self.player_window.display_frame(frame)
                 analyzed = self.video_analyzer.analyze_frame(frame)
                 self.display_analyzed_frame(analyzed)
             else:
-                self.display_frame(frame)
+                if self.player_window:
+                    self.player_window.display_frame(frame)
 
     def select_playback_file(self):
         """选择要播放的视频文件"""
@@ -467,14 +421,24 @@ class VideoStreamApp(QMainWindow):
             
         # 打开视频文件
         if self.video_playback.open_video(file_path):
+            # 创建播放窗口（如果不存在）
+            if not self.player_window:
+                self.player_window = VideoPlayerWindow(self)
+                self.player_window.set_button_callbacks(
+                    play_callback=self.play_video,
+                    pause_callback=self.pause_video,
+                    stop_callback=self.stop_playback,
+                    seek_callback=self.seek_video
+                )
+            
             # 设置进度条范围
-            self.seek_slider.setRange(0, self.video_playback.get_duration())
+            self.player_window.set_slider_range(0, self.video_playback.get_duration())
             
             # 开始播放
             self.video_playback.play()
             
-            # 显示播放控制
-            self.playback_controls.show()
+            # 显示播放窗口
+            self.player_window.show()
             
             # 启动定时器，使用视频实际帧率
             fps = self.video_playback.get_fps()
@@ -495,8 +459,9 @@ class VideoStreamApp(QMainWindow):
         """停止视频播放"""
         self.timer.stop()
         self.video_playback.stop()
-        self.video_label.clear()
-        self.playback_controls.hide()
+        # 隐藏播放窗口但不关闭它
+        if self.player_window:
+            self.player_window.hide()
 
     def seek_video(self, position):
         """视频快进/后退"""
@@ -505,6 +470,14 @@ class VideoStreamApp(QMainWindow):
     def on_playback_end(self):
         """视频播放结束回调"""
         self.stop_playback()
+        
+    def on_player_window_closed(self):
+        """播放窗口关闭回调"""
+        # 停止播放
+        self.timer.stop()
+        self.video_playback.stop()
+        # 将播放窗口引用设为None
+        self.player_window = None
 
     def select_process_file(self):
         """选择要处理的视频文件"""
@@ -618,6 +591,10 @@ class VideoStreamApp(QMainWindow):
         # 停止分析
         if self.analyzing:
             self.stop_analysis()
+        # 关闭播放窗口
+        if self.player_window:
+            self.player_window.close()
+            self.player_window = None
         event.accept()
         
     def toggle_window_mode(self, state):
@@ -625,13 +602,25 @@ class VideoStreamApp(QMainWindow):
         if state == Qt.Checked:
             # 切换到双窗口模式
             self.window_mode = "dual"
-            self.video_widget.hide()
-            self.video_splitter.show()
+            # 在双窗口模式下，需要创建分析视频标签（如果不存在）
+            if not hasattr(self, 'analyzed_video_label'):
+                self.analyzed_video_label = QLabel()
+                self.analyzed_video_label.setAlignment(Qt.AlignCenter)
+                self.analyzed_video_label.setMinimumSize(320, 240)
+                # 将分析视频标签添加到布局中
+                # 注意：这里假设主窗口有一个可以添加组件的布局
+                # 实际实现可能需要根据应用程序的具体布局结构调整
+                if hasattr(self, 'centralWidget') and self.centralWidget().layout():
+                    self.centralWidget().layout().addWidget(self.analyzed_video_label)
         else:
             # 切换到单窗口模式
             self.window_mode = "single"
-            self.video_splitter.hide()
-            self.video_widget.show()
+            # 在单窗口模式下，隐藏分析视频标签（如果存在）
+            if hasattr(self, 'analyzed_video_label'):
+                self.analyzed_video_label.hide()
+        
+        # 更新状态
+        self.update_status(f"状态：已切换到{self.window_mode == 'dual' and '双' or '单'}窗口模式")
     
     def load_model(self):
         """加载YOLOv8模型"""
