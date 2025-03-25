@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import os
+import torch
 from PyQt5.QtCore import QObject, pyqtSignal
 from ultralytics import YOLO
 
@@ -18,6 +19,14 @@ class VideoAnalyzer(QObject):
         self.model_path = None
         self.status_callback = None
         
+        # GPU性能配置
+        self.gpu_enabled = True  # 是否启用GPU
+        self.half_precision = False  # 是否使用半精度(FP16)
+        self.batch_size = 1  # 批处理大小
+        
+        # 检测GPU是否可用
+        self.device = self._detect_device()
+        
         # 初始化模型目录
         self.models_dir = os.path.join(os.getcwd(), 'models')
         
@@ -26,10 +35,34 @@ class VideoAnalyzer(QObject):
         
         # 扫描可用的YOLO模型
         self._scan_yolo_models()
+        
+        # 如果有GPU，设置CUDA缓存
+        if self.device.type == "cuda":
+            # 清理CUDA缓存
+            torch.cuda.empty_cache()
+            # 设置CUDA流水线并行化
+            torch.backends.cudnn.benchmark = True
+    
+    def _detect_device(self):
+        """检测可用的设备（GPU或CPU）"""
+        if torch.cuda.is_available():
+            device = torch.device("cuda:0")
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # 转换为GB
+            cuda_version = torch.version.cuda if hasattr(torch.version, 'cuda') else "未知"
+            if self.status_callback:
+                self.status_callback(f"状态：已检测到GPU: {gpu_name}，显存: {gpu_memory:.2f}GB，CUDA版本: {cuda_version}，将使用GPU加速")
+            return device
+        else:
+            if self.status_callback:
+                self.status_callback("状态：未检测到GPU，将使用CPU运行")
+            return torch.device("cpu")
     
     def set_status_callback(self, callback):
         """设置状态回调函数"""
         self.status_callback = callback
+        # 重新检测设备并更新状态
+        self.device = self._detect_device()
     
     def _load_face_cascade(self):
         """加载OpenCV人脸检测级联分类器"""
@@ -73,11 +106,35 @@ class VideoAnalyzer(QObject):
             return False
             
         try:
+            # 如果有旧模型，先清理内存
+            if self.yolo_model and self.device.type == "cuda":
+                del self.yolo_model
+                torch.cuda.empty_cache()
+                
             model_path = self.models[model_name]
+            # 使用检测到的设备加载模型
+            device_str = "GPU" if self.device.type == "cuda" and self.gpu_enabled else "CPU"
             self.yolo_model = YOLO(model_path)
-            self.model_path = model_path
-            if self.status_callback:
-                self.status_callback(f"状态：已加载模型 {model_name}")
+            
+            # 设置模型运行设备
+            if self.device.type == "cuda" and self.gpu_enabled:
+                self.yolo_model.to(self.device)
+                
+                # 如果启用半精度，转换模型为FP16
+                if self.half_precision:
+                    self.yolo_model.model.half()
+                    precision_str = "FP16半精度"
+                else:
+                    precision_str = "FP32全精度"
+                    
+                self.model_path = model_path
+                if self.status_callback:
+                    self.status_callback(f"状态：已加载模型 {model_name}，使用{device_str}推理，{precision_str}，批处理大小: {self.batch_size}")
+            else:
+                self.model_path = model_path
+                if self.status_callback:
+                    self.status_callback(f"状态：已加载模型 {model_name}，使用{device_str}推理")
+                    
             return True
         except Exception as e:
             if self.status_callback:
@@ -110,6 +167,48 @@ class VideoAnalyzer(QObject):
         self.analyzing = False
         if self.status_callback:
             self.status_callback("状态：视频分析已停止")
+            
+    def set_gpu_config(self, enabled=True, half_precision=False, batch_size=1):
+        """设置GPU配置
+        
+        Args:
+            enabled: 是否启用GPU
+            half_precision: 是否使用半精度(FP16)
+            batch_size: 批处理大小
+        """
+        # 检查是否有可用的GPU
+        if enabled and self.device.type != "cuda":
+            if self.status_callback:
+                self.status_callback("状态：未检测到GPU，无法启用GPU加速")
+            return False
+            
+        old_config = (self.gpu_enabled, self.half_precision, self.batch_size)
+        self.gpu_enabled = enabled
+        self.half_precision = half_precision if enabled else False
+        self.batch_size = batch_size if batch_size > 0 else 1
+        
+        # 如果配置发生变化且模型已加载，需要重新加载模型应用新配置
+        if old_config != (self.gpu_enabled, self.half_precision, self.batch_size) and self.yolo_model is not None:
+            # 获取当前模型名称
+            current_model = None
+            for name, path in self.models.items():
+                if path == self.model_path:
+                    current_model = name
+                    break
+                    
+            if current_model:
+                # 重新加载模型以应用新配置
+                self.load_yolo_model(current_model)
+                
+        # 更新状态信息
+        if self.status_callback:
+            if enabled:
+                precision_str = "FP16半精度" if half_precision else "FP32全精度"
+                self.status_callback(f"状态：GPU加速已启用，{precision_str}，批处理大小: {batch_size}")
+            else:
+                self.status_callback("状态：GPU加速已禁用，将使用CPU运行")
+                
+        return True
     
     def analyze_frame(self, frame):
         """分析视频帧
@@ -137,8 +236,9 @@ class VideoAnalyzer(QObject):
         # 使用YOLOv8进行车辆和行人检测
         if ('vehicle' in self.detection_types or 'person' in self.detection_types) and self.yolo_model:
             try:
-                # 使用YOLOv8进行检测
-                results = self.yolo_model(frame)
+                # 使用YOLOv8进行检测，指定设备和批处理大小
+                device_to_use = self.device if self.gpu_enabled else torch.device("cpu")
+                results = self.yolo_model(frame, device=device_to_use, batch=self.batch_size)
                 
                 # 处理检测结果
                 for result in results:

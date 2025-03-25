@@ -40,7 +40,13 @@ class VideoStreamApp(QMainWindow):
         self.analyzing = False
         self.window_mode = "single"  # single或dual模式
         
-        # 设置回调函数
+        # 创建状态标签，以便回调函数可以使用
+        self.status_label = QLabel("状态：就绪")
+        
+        # 初始化UI
+        self.init_ui()
+        
+        # 设置回调函数 - 在UI初始化后设置
         self.video_processor.set_status_callback(self.update_status)
         self.video_playback.set_callbacks(
             frame_callback=self.display_playback_frame,
@@ -52,9 +58,6 @@ class VideoStreamApp(QMainWindow):
             status_callback=self.update_status
         )
         self.video_analyzer.set_status_callback(self.update_status)
-        
-        # 初始化UI
-        self.init_ui()
 
     def init_ui(self):
         # 主窗口设置
