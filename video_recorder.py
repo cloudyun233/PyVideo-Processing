@@ -21,6 +21,9 @@ class VideoRecorder(QObject):
         self.frame_callback = None
         self.status_callback = None
         self.utils = VideoUtils()
+        self.output_format = "mp4"  # 默认输出格式
+        self.interval = 60  # 默认60秒
+        self.file_prefix = "video"  # 默认文件前缀
         
     def set_callbacks(self, frame_callback=None, status_callback=None):
         """设置回调函数"""
@@ -38,14 +41,51 @@ class VideoRecorder(QObject):
             return True
         return False
     
-    def start_preview(self, camera_index, width=640, height=480, fps=30):
+    def get_max_camera_resolution(self, camera_index):
+        """获取摄像头支持的最大分辨率
+        
+        Args:
+            camera_index: 摄像头索引
+        
+        Returns:
+            tuple: (最大宽度, 最大高度)
+        """
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            return (640, 480)
+        
+        # 获取支持的最大分辨率
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        return (width, height)
+
+    def get_max_camera_fps(self, camera_index):
+        """获取摄像头支持的最大帧率
+        
+        Args:
+            camera_index: 摄像头索引
+        
+        Returns:
+            float: 最大帧率
+        """
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            return 30.0
+        
+        # 获取支持的最大帧率
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        return fps
+
+    def start_preview(self, camera_index, width=None, height=None, fps=None):
         """开始摄像头预览
         
         Args:
             camera_index: 摄像头索引
-            width: 视频宽度
-            height: 视频高度
-            fps: 帧率
+            width: 视频宽度，如果为None则使用最大分辨率
+            height: 视频高度，如果为None则使用最大分辨率
+            fps: 帧率，如果为None则使用最大帧率
             
         Returns:
             bool: 是否成功启动预览
@@ -61,6 +101,12 @@ class VideoRecorder(QObject):
                 self.status_callback("状态：请选择有效摄像头")
             return False
             
+        # 获取最大分辨率和帧率
+        if width is None or height is None:
+            width, height = self.get_max_camera_resolution(camera_index)
+        if fps is None:
+            fps = self.get_max_camera_fps(camera_index)
+        
         # 打开摄像头
         self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
@@ -95,27 +141,27 @@ class VideoRecorder(QObject):
         if self.status_callback:
             self.status_callback("状态：就绪")
     
-    def start_recording(self, output_format="mp4", interval=60):
+    def start_recording(self, output_format=None, interval=None):
         """开始录制视频
         
         Args:
-            output_format: 输出格式 (mp4 或 avi)
-            interval: 定时保存间隔（秒）
-            
-        Returns:
-            bool: 是否成功开始录制
+            output_format: 输出格式 (mp4 或 avi)，如果为None则使用当前设置
+            interval: 定时保存间隔（秒），如果为None则使用当前设置
         """
-        # 注意：此方法会保持视频时长不变，即使改变了帧率
         if self.recording or not self.cap or not self.cap.isOpened():
             return False
             
         self.recording = True
         self.last_record_time = time.time()
         
+        # 使用参数或当前设置
+        output_format = output_format if output_format is not None else self.output_format
+        self.interval = interval if interval is not None else self.interval
+        
         # 初始化视频写入器
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ext = "avi" if output_format.lower() == "avi" else "mp4"
-        filename = os.path.join(self.save_path, f"video_{timestamp}.{ext}")
+        ext = output_format.lower()
+        filename = os.path.join(self.save_path, f"{self.file_prefix}_{timestamp}.{ext}")
         
         # 获取适当的fourcc编码
         fourcc = self.utils.get_fourcc(ext)
@@ -150,27 +196,27 @@ class VideoRecorder(QObject):
             
         return True
     
-    def save_new_video_file(self, frame, output_format="mp4"):
+    def save_new_video_file(self, frame, output_format=None):
         """定时保存新视频文件
         
         Args:
             frame: 当前视频帧
-            output_format: 输出格式 (mp4 或 avi)
-            
-        Returns:
-            bool: 是否成功创建新文件
+            output_format: 输出格式 (mp4 或 avi)，如果为None则使用当前设置
         """
         if not self.recording or not self.cap or not self.cap.isOpened():
             return False
             
+        # 使用参数或当前设置
+        output_format = output_format if output_format is not None else self.output_format
+        
         # 释放当前写入器
         if self.video_writer:
             self.video_writer.release()
             
         # 创建新文件
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ext = "avi" if output_format.lower() == "avi" else "mp4"
-        filename = os.path.join(self.save_path, f"video_{timestamp}.{ext}")
+        ext = output_format.lower()
+        filename = os.path.join(self.save_path, f"{self.file_prefix}_{timestamp}.{ext}")
         
         # 获取适当的fourcc编码
         fourcc = self.utils.get_fourcc(ext)
