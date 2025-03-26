@@ -36,6 +36,11 @@ class VideoAnalyzer(QObject):
         # 扫描可用的YOLO模型
         self._scan_yolo_models()
         
+        # 自动加载第一个可用模型
+        if self.models:
+            first_model = list(self.models.keys())[0]
+            self.load_yolo_model(first_model)
+        
         # 如果有GPU，设置CUDA缓存
         if self.device.type == "cuda":
             # 清理CUDA缓存

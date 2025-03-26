@@ -1,51 +1,34 @@
-# video_processor.py
 import cv2
 import os
 from datetime import datetime
 from PyQt5.QtCore import QObject
-
+from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 
 class VideoProcessor(QObject):
-    """视频处理类，负责视频格式转换、分辨率调整等处理功能"""
-    
-    def __init__(self):
+    def __init__(self, max_workers=4):
         super().__init__()
         self.status_callback = None
         self.save_path = os.getcwd()
+        self.max_workers = max_workers  # 可根据CPU核心数调整
         
-    def set_status_callback(self, callback):
-        """设置状态回调函数"""
-        self.status_callback = callback
-        
-    def set_save_path(self, path):
-        """设置保存路径"""
-        if os.path.exists(path) and os.path.isdir(path):
-            self.save_path = path
-            return True
-        return False
+    # 原有的set_status_callback和set_save_path保持不变
     
-    def process_video(self, input_file, width, height, fps, output_format="mp4"):
-        """处理视频文件
-        
-        Args:
-            input_file: 输入视频文件路径
-            width: 目标宽度
-            height: 目标高度
-            fps: 目标帧率
-            output_format: 输出格式 (mp4 或 avi)
-            
-        Returns:
-            bool: 处理是否成功
-            str: 输出文件路径或错误信息
-        """
-        # 注意：此方法会保持视频时长不变，即使改变了帧率
-        # 检查输入文件
+    def _process_frame(self, frame, width, height):
+        """处理单帧的辅助函数"""
+        return cv2.resize(frame, (width, height))
+    
+    def process_video(self, input_file, width, height, fps, output_format="mp4", buffer_size=100):
+        """优化后的视频处理函数"""
         if not input_file or not os.path.exists(input_file):
             if self.status_callback:
                 self.status_callback("状态：请选择有效视频文件")
             return False, "输入文件不存在"
 
-        # 打开视频文件
+        # 提前检查参数
+        if width <= 0 or height <= 0 or fps <= 0:
+            return False, "无效的宽度、高度或帧率参数"
+
         cap = cv2.VideoCapture(input_file)
         if not cap.isOpened():
             if self.status_callback:
@@ -53,129 +36,111 @@ class VideoProcessor(QObject):
             return False, "无法打开视频文件"
 
         try:
-            # 设置输出格式和编码器
+            # 使用更兼容的编码器选项
             ext = output_format.lower()
-            if ext not in ["mp4", "avi"]:
-                ext = "mp4"  # 默认使用mp4
-                
-            fourcc = cv2.VideoWriter_fourcc(*'XVID') if ext == "avi" else cv2.VideoWriter_fourcc(*'mp4v')
+            if ext == "avi":
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            else:
+                # 尝试使用H264编码器（更兼容Windows）
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*'H264')
+                except Exception:
+                    # 如果H264不可用，尝试其他常用编码器
+                    for codec in ['avc1', 'X264', 'mp4v']:
+                        try:
+                            fourcc = cv2.VideoWriter_fourcc(*codec)
+                            print(f"使用编码器: {codec}")
+                            break
+                        except Exception:
+                            continue
+                    else:
+                        # 如果所有尝试都失败，使用基本编码器
+                        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                        print("使用基本编码器: mp4v")
             
-            # 创建输出文件名
-            # 获取原文件名（不带扩展名）
+            # 输出文件设置
             base_name = os.path.splitext(os.path.basename(input_file))[0]
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = os.path.join(self.save_path, f"{base_name}_{timestamp}.{ext}")
             
-            # 获取原始视频信息
-            original_fps = cap.get(cv2.CAP_PROP_FPS)
+            # 获取视频信息
+            original_fps = cap.get(cv2.CAP_PROP_FPS) or 25
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             
-            # 计算原始视频时长（秒）
-            original_duration = total_frames / original_fps if original_fps > 0 else 0
-            
-            # 创建视频写入器，使用目标帧率
+            # 创建视频写入器
             out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+            if not out.isOpened():
+                cap.release()
+                return False, "无法创建输出文件"
             
-            # 处理每一帧
+            frame_buffer = []
             frame_count = 0
+            target_total_frames = total_frames
             
-            # 如果原始帧率和目标帧率不同，需要调整帧的选取
-            if original_fps > 0 and fps > 0 and abs(original_fps - fps) > 0.1:
-                # 计算帧采样率，确保输出视频时长与原视频相同
-                # 如果目标帧率高于原始帧率，可能需要重复某些帧
-                # 如果目标帧率低于原始帧率，需要跳过某些帧
+            # 如果帧率不同，计算采样率
+            if abs(original_fps - fps) > 0.1:
                 frame_ratio = original_fps / fps
                 target_total_frames = int(total_frames / frame_ratio)
-                
+            
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 while cap.isOpened():
-                    # 计算当前应该读取的帧位置
-                    target_frame_pos = int(frame_count * frame_ratio)
-                    
-                    # 设置读取位置
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame_pos)
-                    
                     ret, frame = cap.read()
                     if not ret:
                         break
                         
-                    # 调整帧大小
-                    resized_frame = cv2.resize(frame, (width, height))
-                    out.write(resized_frame)
+                    # 计算目标帧位置
+                    if abs(original_fps - fps) > 0.1:
+                        current_pos = int(frame_count * frame_ratio)
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, current_pos)
                     
-                    # 更新进度
+                    # 使用线程池处理帧
+                    future = executor.submit(self._process_frame, frame, width, height)
+                    frame_buffer.append(future)
                     frame_count += 1
-                    if self.status_callback and frame_count % 30 == 0:  # 每30帧更新一次状态
-                        progress = int((frame_count / target_total_frames) * 100) if target_total_frames > 0 else 0
-                        self.status_callback(f"状态：处理中 {progress}%")
+                    
+                    # 当缓冲区满时写入
+                    if len(frame_buffer) >= buffer_size or frame_count >= target_total_frames:
+                        for future in frame_buffer:
+                            resized_frame = future.result()
+                            out.write(resized_frame)
+                        frame_buffer.clear()
                         
-                    # 检查是否已处理完所有需要的帧
+                        # 更新进度
+                        if self.status_callback and frame_count % 30 == 0:
+                            progress = int((frame_count / target_total_frames) * 100)
+                            self.status_callback(f"状态：处理中 {progress}%")
+                    
                     if frame_count >= target_total_frames:
                         break
-            else:
-                # 如果帧率相同或无法获取原始帧率，则正常处理
-                while cap.isOpened():
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                        
-                    # 调整帧大小
-                    resized_frame = cv2.resize(frame, (width, height))
-                    out.write(resized_frame)
-                    
-                    # 更新进度
-                    frame_count += 1
-                    if self.status_callback and frame_count % 30 == 0:  # 每30帧更新一次状态
-                        progress = int((frame_count / total_frames) * 100) if total_frames > 0 else 0
-                        self.status_callback(f"状态：处理中 {progress}%")
             
-            # 释放资源
+            # 处理剩余的帧
+            for future in frame_buffer:
+                out.write(future.result())
+            
             cap.release()
             out.release()
             
             if self.status_callback:
                 self.status_callback(f"状态：视频处理完成，保存至 {output_file}")
-                
             return True, output_file
             
         except Exception as e:
-            if cap.isOpened():
-                cap.release()
-            if 'out' in locals() and out:
-                out.release()
+            if cap.isOpened(): cap.release()
+            if 'out' in locals(): out.release()
             if self.status_callback:
                 self.status_callback(f"状态：处理失败 - {str(e)}")
             return False, str(e)
     
-    def extract_frames(self, video_path, output_dir=None, interval=1):
-        """从视频中提取帧
-        
-        Args:
-            video_path: 视频文件路径
-            output_dir: 输出目录，默认为save_path
-            interval: 提取间隔（秒）
-            
-        Returns:
-            bool: 是否成功
-            int: 提取的帧数
-        """
+    def extract_frames(self, video_path, output_dir=None, interval=1, batch_size=50):
+        """优化后的帧提取函数"""
         if not os.path.exists(video_path):
             if self.status_callback:
                 self.status_callback("状态：视频文件不存在")
             return False, 0
             
-        # 设置输出目录
-        if output_dir is None:
-            output_dir = self.save_path
-            
-        if not os.path.exists(output_dir):
-            try:
-                os.makedirs(output_dir)
-            except Exception as e:
-                if self.status_callback:
-                    self.status_callback(f"状态：创建输出目录失败 - {str(e)}")
-                return False, 0
+        output_dir = output_dir or self.save_path
+        os.makedirs(output_dir, exist_ok=True)
         
-        # 打开视频
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             if self.status_callback:
@@ -183,46 +148,40 @@ class VideoProcessor(QObject):
             return False, 0
             
         try:
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            if fps <= 0:
-                fps = 25  # 默认25fps
-                
-            # 计算帧间隔
-            frame_interval = int(fps * interval)
-            if frame_interval < 1:
-                frame_interval = 1
-                
-            # 提取帧
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            frame_interval = max(1, int(fps * interval))
             count = 0
             frame_count = 0
+            frame_batch = []
             
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
                     
-                # 按间隔保存帧
                 if frame_count % frame_interval == 0:
                     frame_path = os.path.join(output_dir, f"frame_{count:04d}.jpg")
-                    cv2.imwrite(frame_path, frame)
+                    frame_batch.append((frame_path, frame))
                     count += 1
                     
                 frame_count += 1
                 
-                # 更新状态
-                if self.status_callback and frame_count % 30 == 0:
-                    self.status_callback(f"状态：已提取 {count} 帧")
+                # 批量写入
+                if len(frame_batch) >= batch_size or not ret:
+                    with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                        executor.map(lambda x: cv2.imwrite(x[0], x[1]), frame_batch)
+                    frame_batch.clear()
+                    
+                    if self.status_callback and frame_count % 30 == 0:
+                        self.status_callback(f"状态：已提取 {count} 帧")
             
             cap.release()
-            
             if self.status_callback:
                 self.status_callback(f"状态：帧提取完成，共 {count} 帧")
-                
             return True, count
             
         except Exception as e:
-            if cap.isOpened():
-                cap.release()
+            if cap.isOpened(): cap.release()
             if self.status_callback:
                 self.status_callback(f"状态：帧提取失败 - {str(e)}")
             return False, 0

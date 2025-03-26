@@ -65,8 +65,19 @@ class VideoRecorder(QObject):
             self._update_status("请选择有效摄像头")
             return False
 
+        # 优先尝试最大分辨率
         if width is None or height is None:
             width, height = self.get_max_camera_resolution(camera_index)
+            if not self._try_set_resolution(camera_index, width, height):
+                # 尝试720p
+                width, height = 1280, 720
+                if not self._try_set_resolution(camera_index, width, height):
+                    # 降级到480p
+                    width, height = 640, 480
+                    if not self._try_set_resolution(camera_index, width, height):
+                        self._update_status("无法设置任何分辨率")
+                        return False
+
         fps = fps or self._get_camera_property(camera_index,
             lambda c: c.get(cv2.CAP_PROP_FPS), 30)
 
@@ -79,6 +90,15 @@ class VideoRecorder(QObject):
         self.previewing = True
         self._update_status("预览中")
         return True
+
+    def _try_set_resolution(self, camera_index, width, height):
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            return False
+        success = (cap.set(cv2.CAP_PROP_FRAME_WIDTH, width) and
+                  cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height))
+        cap.release()
+        return success
 
     def _set_camera_params(self, width, height, fps):
         return (self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width) and
@@ -154,38 +174,34 @@ class VideoRecorder(QObject):
     def _get_fourcc_code(self, output_format):
         """根据输出格式返回合适的FourCC编码"""
         format_map = {
-            "mp4": "H264",  # 使用H264编码器，更兼容Windows
+            "mp4": "mp4v",  # 使用更兼容的mp4v编码器
             "avi": "XVID",
             "mov": "MJPG"
         }
         
         # 尝试获取主要编码器，如果失败则尝试备选编码器
         primary_codec = format_map.get(output_format.lower(), "H264")
-        try:
-            # 尝试创建主要编码器
-            fourcc = cv2.VideoWriter_fourcc(*primary_codec)
-            return primary_codec
-        except Exception as e:
-            print(f"警告：主要编码器 {primary_codec} 创建失败，尝试备选编码器")
-            # 备选编码器映射
-            fallback_map = {
-                "H264": ["avc1", "X264", "mp4v"],
-                "XVID": ["DIVX", "mp4v"],
-                "MJPG": ["mp4v"]
-            }
-            
-            # 尝试备选编码器
-            for codec in fallback_map.get(primary_codec, ["mp4v"]):
-                try:
-                    fourcc = cv2.VideoWriter_fourcc(*codec)
-                    print(f"使用备选编码器: {codec}")
-                    return codec
-                except Exception:
-                    continue
-            
-            # 如果所有编码器都失败，返回最基本的编码器
-            print("所有编码器尝试失败，使用基本编码器 'mp4v'")
-            return "mp4v"
+        
+        # 优先尝试更兼容的编码器顺序
+        codec_order = {
+            "mp4v": ["mp4v"],
+            "XVID": ["DIVX", "mp4v"],
+            "MJPG": ["mp4v"]
+        }
+        
+        # 尝试所有可能的编码器
+        for codec in codec_order.get(primary_codec, ["mp4v"]):
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                print(f"使用编码器: {codec}")
+                return codec
+            except Exception as e:
+                print(f"编码器 {codec} 尝试失败: {str(e)}")
+                continue
+        
+        # 如果所有编码器都失败，返回最基本的编码器
+        print("所有编码器尝试失败，使用基本编码器 'mp4v'")
+        return "mp4v"
 
     def stop_recording(self):
         if not self.recording:
@@ -195,7 +211,7 @@ class VideoRecorder(QObject):
             # 计算实际录制时长和帧率
             elapsed_time = time.time() - self.start_time
             actual_fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
-            print(f"录制完成：时长 {elapsed_time:.2f} 秒，总帧数 {self.frame_count}，实际帧率 {actual_fps:.2f}")
+            self._update_status(f"录制完成：时长 {elapsed_time:.2f} 秒，总帧数 {self.frame_count}")
             
             self.video_writer.release()
             self.video_writer = None
@@ -217,7 +233,7 @@ class VideoRecorder(QObject):
         if self.recording:
             try:
                 if not self.video_writer.write(frame):
-                    print(f"警告：帧写入失败，当前帧计数：{self.frame_count}")
+                    self._update_status(f"帧写入失败，请检查存储空间和编码器设置")
                 else:
                     self.frame_count += 1
                     
@@ -231,10 +247,30 @@ class VideoRecorder(QObject):
         return True, frame
 
     def _rotate_video_file(self, frame):
-        if self.video_writer:
-            self.video_writer.release()
-        self.video_writer = self._create_writer()
-        return self.video_writer and self.video_writer.write(frame)
+        try:
+            # 释放旧写入器并创建新实例
+            if self.video_writer:
+                self.video_writer.release()
+            
+            new_writer = self._create_writer()
+            if not new_writer:
+                return False
+                
+            # 测试写入首帧
+            write_success = new_writer.write(frame)
+            if not write_success:
+                new_writer.release()
+                return False
+            
+            # 仅在完全成功时替换写入器
+            self.video_writer = new_writer
+            return True
+            
+        except Exception as e:
+            print(f"视频轮换失败: {str(e)}")
+            if 'new_writer' in locals():
+                new_writer.release()
+            return False
 
     def _update_status(self, message):
         if self.status_callback:

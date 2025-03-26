@@ -184,15 +184,15 @@ class OpenCameraDialog(QDialog):
             types.append("vehicle")
         self.analyzer.set_detection_types(types)
         
-        # 根据是否有检测类型来启动或停止分析器
+        # 统一控制分析器启停
         if types:
-            self.analyzer.start_analysis()
+            if self.analyzer.start_analysis():
+                # 当需要YOLO模型时检测加载状态
+                if ("vehicle" in types or "person" in types) and not self.analyzer.yolo_model:
+                    QMessageBox.warning(self, "提示", "车辆或行人检测需加载YOLO模型！\n请先在智能分析设置中加载模型。")
+                    self.analyzer.stop_analysis()
         else:
             self.analyzer.stop_analysis()
-            
-        # 如果至少选择车辆或行人，则必须加载YOLO模型（此处提醒用户加载模型）
-        if ("vehicle" in types or "person" in types) and not self.analyzer.yolo_model:
-            QMessageBox.warning(self, "提示", "车辆或行人检测需加载YOLO模型！请先在智能分析设置中加载模型。")
   
     def start_recording(self):
         # 调用video_recorder的开始录制接口，注意录制设置必须事先在“录制设置”中配置好（例如存储间隔、格式、前缀）
@@ -275,9 +275,6 @@ class VideoRecordSettingsDialog(QDialog):
         QMessageBox.information(self, "提示", "设置已保存！")
         self.close()
 
-###########################################################
-# 本地视频格式处理对话框
-###########################################################
 class LocalVideoFormatProcessingDialog(QDialog):
     def __init__(self):
         super().__init__()
@@ -289,14 +286,15 @@ class LocalVideoFormatProcessingDialog(QDialog):
     def _init_ui(self):
         layout = QVBoxLayout()
       
-        # 选择视频目录
-        dir_layout = QHBoxLayout()
-        self.dir_edit = QLineEdit()
-        self.btn_browse = QPushButton("选择目录")
-        self.btn_browse.clicked.connect(self.select_directory)
-        dir_layout.addWidget(self.dir_edit)
-        dir_layout.addWidget(self.btn_browse)
-        layout.addLayout(dir_layout)
+        # 选择视频文件
+        file_layout = QHBoxLayout()
+        self.file_edit = QLineEdit()
+        self.file_edit.setPlaceholderText("请选择视频文件...")
+        self.btn_browse = QPushButton("选择视频")
+        self.btn_browse.clicked.connect(self.select_video_file)
+        file_layout.addWidget(self.file_edit)
+        file_layout.addWidget(self.btn_browse)
+        layout.addLayout(file_layout)
       
         # 分辨率调整下拉框
         self.resolution_combo = QComboBox()
@@ -310,7 +308,7 @@ class LocalVideoFormatProcessingDialog(QDialog):
         layout.addWidget(QLabel("输出帧率："))
         layout.addWidget(self.fps_combo)
       
-        # 输出视频格式列表（例如 MP4转AVI）
+        # 输出视频格式列表
         self.format_combo = QComboBox()
         self.format_combo.addItems(["mp4", "avi"])
         layout.addWidget(QLabel("输出视频格式："))
@@ -326,16 +324,29 @@ class LocalVideoFormatProcessingDialog(QDialog):
       
         self.setLayout(layout)
   
-    def select_directory(self):
-        directory = QFileDialog.getExistingDirectory(self, "选择视频目录", os.getcwd())
-        if directory:
-            self.dir_edit.setText(directory)
-            self.processor.set_save_path(directory)
+    def select_video_file(self):
+        """选择单个视频文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "选择视频文件", 
+            os.getcwd(),
+            "Video Files (*.mp4 *.avi);;All Files (*)"
+        )
+        if file_path:
+            self.file_edit.setText(file_path)
+            # 设置保存路径为视频所在目录
+            save_path = os.path.dirname(file_path)
+            self.processor.save_path = save_path
   
     def start_conversion(self):
-        directory = self.dir_edit.text().strip()
-        if not directory or not os.path.isdir(directory):
-            QMessageBox.warning(self, "提示", "请选择有效的目录！")
+        file_path = self.file_edit.text().strip()
+        if not file_path or not os.path.isfile(file_path):
+            QMessageBox.warning(self, "提示", "请选择有效的视频文件！")
+            return
+      
+        # 检查文件是否为支持的视频格式
+        if not file_path.lower().endswith((".mp4", ".avi")):
+            QMessageBox.warning(self, "提示", "请选择支持的视频格式（.mp4 或 .avi）！")
             return
       
         # 计算参数：分辨率、帧率
@@ -352,25 +363,29 @@ class LocalVideoFormatProcessingDialog(QDialog):
         fps = int(self.fps_combo.currentText())
         output_format = self.format_combo.currentText()
       
-        # 将目录下的视频文件依次转换（这里简单处理目录下所有.mp4与.avi文件）
-        video_files = [os.path.join(directory, f) for f in os.listdir(directory)
-                       if f.lower().endswith((".mp4", ".avi"))]
-        if not video_files:
-            QMessageBox.warning(self, "提示", "目录中未找到视频文件！")
-            return
-      
-        total = len(video_files)
+        # 设置进度条
         self.progress_bar.setValue(0)
-        for index, file_path in enumerate(video_files):
-            # 执行视频处理，这里直接调用process_video方法
-            success, out_path = self.processor.process_video(file_path, width, height, fps, output_format)
-            if not success:
-                QMessageBox.warning(self, "错误", f"处理 {file_path} 时出错: {out_path}")
-            progress = int(((index + 1) / total) * 100)
-            self.progress_bar.setValue(progress)
-            QApplication.processEvents()  # 更新界面
-      
-        QMessageBox.information(self, "提示", "视频转换完成！")
+        
+        # 设置状态回调以更新进度条
+        def update_progress(status):
+            if "处理中" in status:
+                try:
+                    percent = int(status.split()[-1].rstrip("%"))
+                    self.progress_bar.setValue(percent)
+                    QApplication.processEvents()
+                except:
+                    pass
+        
+        self.processor.status_callback = update_progress
+        
+        # 执行视频处理
+        success, result = self.processor.process_video(file_path, width, height, fps, output_format)
+        if not success:
+            QMessageBox.warning(self, "错误", f"处理失败: {result}")
+            return
+            
+        self.progress_bar.setValue(100)
+        QMessageBox.information(self, "提示", f"视频转换完成！\n保存至: {result}")
         self.close()
 
 ###########################################################
@@ -496,6 +511,10 @@ class LocalVideoPlaybackDialog(QDialog):
         if self.check_vehicle.isChecked():
             types.append("vehicle")
         self.analyzer.set_detection_types(types)
+        if types:
+            self.analyzer.start_analysis()
+        else:
+            self.analyzer.stop_analysis()
   
     def closeEvent(self, event):
         self.stop_play()
