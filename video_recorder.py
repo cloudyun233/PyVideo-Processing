@@ -3,13 +3,13 @@ import cv2
 import os
 import time
 from datetime import datetime
-from PyQt5.QtCore import QObject
+from PyQt5.QtCore import QObject, pyqtSignal
 from video_utils import VideoUtils
 
 
 class VideoRecorder(QObject):
-    """视频录制类，负责摄像头视频流的捕获、预览和录制"""
-    
+    recording_state_changed = pyqtSignal(bool)
+
     def __init__(self):
         super().__init__()
         self.cap = None
@@ -21,256 +21,150 @@ class VideoRecorder(QObject):
         self.frame_callback = None
         self.status_callback = None
         self.utils = VideoUtils()
-        self.output_format = "mp4"  # 默认输出格式
-        self.interval = 60  # 默认60秒
-        self.file_prefix = "video"  # 默认文件前缀
-        
+        self.output_format = "mp4"
+        self.interval = 60
+        self.file_prefix = "video"
+
     def set_callbacks(self, frame_callback=None, status_callback=None):
-        """设置回调函数"""
         self.frame_callback = frame_callback
         self.status_callback = status_callback
-        
+
     def get_camera_list(self):
-        """获取可用摄像头列表"""
         return self.utils.detect_cameras()
-        
+
     def set_save_path(self, path):
-        """设置保存路径"""
-        if os.path.exists(path) and os.path.isdir(path):
+        if os.path.isdir(path):
             self.save_path = path
             return True
         return False
-    
-    def get_max_camera_resolution(self, camera_index):
-        """获取摄像头支持的最大分辨率
-        
-        Args:
-            camera_index: 摄像头索引
-        
-        Returns:
-            tuple: (最大宽度, 最大高度)
-        """
+
+    def _get_camera_property(self, camera_index, prop_func, default):
         cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            return (640, 480)
-        
-        # 获取支持的最大分辨率
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            return default
+        value = prop_func(cap)
         cap.release()
+        return value
+
+    def get_max_camera_resolution(self, camera_index):
+        width = self._get_camera_property(camera_index, 
+            lambda c: int(c.get(cv2.CAP_PROP_FRAME_WIDTH)), 640)
+        height = self._get_camera_property(camera_index,
+            lambda c: int(c.get(cv2.CAP_PROP_FRAME_HEIGHT)), 480)
         return (width, height)
 
-    def get_max_camera_fps(self, camera_index):
-        """获取摄像头支持的最大帧率
-        
-        Args:
-            camera_index: 摄像头索引
-        
-        Returns:
-            float: 最大帧率
-        """
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            return 30.0
-        
-        # 获取支持的最大帧率
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
-        return fps
-
     def start_preview(self, camera_index, width=None, height=None, fps=None):
-        """开始摄像头预览
-        
-        Args:
-            camera_index: 摄像头索引
-            width: 视频宽度，如果为None则使用最大分辨率
-            height: 视频高度，如果为None则使用最大分辨率
-            fps: 帧率，如果为None则使用最大帧率
-            
-        Returns:
-            bool: 是否成功启动预览
-        """
         if self.previewing:
             return True
-            
+
         try:
-            # 尝试将camera_index转换为整数
             camera_index = int(camera_index)
         except ValueError:
-            if self.status_callback:
-                self.status_callback("状态：请选择有效摄像头")
+            self._update_status("请选择有效摄像头")
             return False
-            
-        # 获取最大分辨率和帧率
+
         if width is None or height is None:
             width, height = self.get_max_camera_resolution(camera_index)
-        if fps is None:
-            fps = self.get_max_camera_fps(camera_index)
-        
-        # 打开摄像头
+        fps = fps or self._get_camera_property(camera_index,
+            lambda c: c.get(cv2.CAP_PROP_FPS), 30)
+
         self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_FPS, fps)
-        
-        if not self.cap.isOpened():
-            if self.status_callback:
-                self.status_callback("状态：无法打开摄像头")
+        if not self.cap.isOpened() or not self._set_camera_params(width, height, fps):
+            self._release_camera()
+            self._update_status("无法启动摄像头")
             return False
-            
+
         self.previewing = True
-        
-        if self.status_callback:
-            self.status_callback("状态：预览中")
-            
+        self._update_status("预览中")
         return True
-    
+
+    def _set_camera_params(self, width, height, fps):
+        return (self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width) and
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height) and
+                self.cap.set(cv2.CAP_PROP_FPS, fps))
+
     def stop_preview(self):
-        """停止摄像头预览"""
-        # 如果正在录制，先停止录制
         if self.recording:
             self.stop_recording()
-            
         self.previewing = False
-        
-        # 释放资源
+        self._release_camera()
+        self._update_status("就绪")
+
+    def _release_camera(self):
         if self.cap:
             self.cap.release()
             self.cap = None
-            
-        if self.status_callback:
-            self.status_callback("状态：就绪")
-    
+
     def start_recording(self, output_format=None, interval=None):
-        """开始录制视频
-        
-        Args:
-            output_format: 输出格式 (mp4 或 avi)，如果为None则使用当前设置
-            interval: 定时保存间隔（秒），如果为None则使用当前设置
-        """
-        if self.recording or not self.cap or not self.cap.isOpened():
+        if not self.cap or self.recording:
             return False
-            
+
+        self.interval = int(interval) if interval else self.interval
+        self.output_format = output_format or self.output_format
+        self.video_writer = self._create_writer()
+        
+        if not self.video_writer:
+            return False
+
         self.recording = True
+        self.recording_state_changed.emit(True)
         self.last_record_time = time.time()
-        
-        # 使用参数或当前设置
-        output_format = output_format if output_format is not None else self.output_format
-        self.interval = interval if interval is not None else self.interval
-        
-        # 初始化视频写入器
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ext = output_format.lower()
-        filename = os.path.join(self.save_path, f"{self.file_prefix}_{timestamp}.{ext}")
-        
-        # 获取适当的fourcc编码
-        fourcc = self.utils.get_fourcc(ext)
-        
-        # 获取摄像头实际分辨率和帧率
-        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = self.cap.get(cv2.CAP_PROP_FPS)
-        
-        # 创建视频写入器
-        self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (width, height), isColor=True)
-        
-        if self.status_callback:
-            self.status_callback("状态：录制中")
-            
+        self._update_status("录制中")
         return True
-    
+
+    def _create_writer(self):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.file_prefix}_{timestamp}.{self.output_format}"
+        return cv2.VideoWriter(
+            os.path.join(self.save_path, filename),
+            self.utils.get_fourcc(self.output_format),
+            self.cap.get(cv2.CAP_PROP_FPS),
+            (int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), 
+             int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))),
+            isColor=True
+        )
+
     def stop_recording(self):
-        """停止录制视频"""
         if not self.recording:
             return False
             
-        self.recording = False
-        
-        # 释放视频写入器
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
             
-        if self.status_callback:
-            self.status_callback("状态：预览中")
-            
+        self.recording = False
+        self.recording_state_changed.emit(False)
+        self._update_status("预览中")
         return True
-    
-    def save_new_video_file(self, frame, output_format=None):
-        """定时保存新视频文件
-        
-        Args:
-            frame: 当前视频帧
-            output_format: 输出格式 (mp4 或 avi)，如果为None则使用当前设置
-        """
-        if not self.recording or not self.cap or not self.cap.isOpened():
-            return False
-            
-        # 使用参数或当前设置
-        output_format = output_format if output_format is not None else self.output_format
-        
-        # 释放当前写入器
-        if self.video_writer:
-            self.video_writer.release()
-            
-        # 创建新文件
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ext = output_format.lower()
-        filename = os.path.join(self.save_path, f"{self.file_prefix}_{timestamp}.{ext}")
-        
-        # 获取适当的fourcc编码
-        fourcc = self.utils.get_fourcc(ext)
-        
-        # 获取摄像头实际分辨率和帧率
-        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = self.cap.get(cv2.CAP_PROP_FPS)
-        
-        # 创建新的视频写入器
-        self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (width, height), isColor=True)
-        
-        # 写入当前帧
-        self.video_writer.write(frame)
-        
-        # 更新时间戳
-        self.last_record_time = time.time()
-        
-        return True
-    
+
     def get_frame(self):
-        """获取当前摄像头帧
-        
-        Returns:
-            tuple: (是否成功, 帧数据)
-        """
-        if not self.previewing or not self.cap or not self.cap.isOpened():
+        if not self.previewing or not self.cap:
             return False, None
-            
+
         ret, frame = self.cap.read()
         if not ret:
             return False, None
-            
-        # 如果正在录制，写入帧
-        if self.recording and self.video_writer:
+
+        if self.recording:
             self.video_writer.write(frame)
-            
-            # 检查是否需要定时保存新文件
-            current_time = time.time()
-            try:
-                interval = int(self.interval)
-            except (AttributeError, ValueError):
-                interval = 60  # 默认60秒
-                
-            if current_time - self.last_record_time >= interval:
-                self.save_new_video_file(frame)
-        
-        # 返回BGR格式的帧
+            if time.time() - self.last_record_time >= self.interval:
+                if self._rotate_video_file(frame):
+                    self.last_record_time = time.time()
+
         return True, frame
-    
+
+    def _rotate_video_file(self, frame):
+        if self.video_writer:
+            self.video_writer.release()
+        self.video_writer = self._create_writer()
+        return self.video_writer and self.video_writer.write(frame)
+
+    def _update_status(self, message):
+        if self.status_callback:
+            self.status_callback(f"状态：{message}")
+
     def is_previewing(self):
-        """检查是否正在预览"""
         return self.previewing
-    
+
     def is_recording(self):
-        """检查是否正在录制"""
         return self.recording

@@ -1,7 +1,7 @@
 # gui/recording_settings_window.py
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QComboBox, QLineEdit, QPushButton, QSpinBox,
-                             QFormLayout, QGroupBox)
+                             QFormLayout, QGroupBox, QMessageBox)
 from PyQt5.QtCore import Qt
 
 class RecordingSettingsWindow(QWidget):

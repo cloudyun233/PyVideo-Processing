@@ -5,10 +5,7 @@ from .video_processing_window import VideoProcessingWindow
 from .camera_preview_window import CameraPreviewWindow
 from .recording_settings_window import RecordingSettingsWindow
 from .video_playback_window import VideoPlaybackWindow
-from .video_analysis_settings_window import VideoAnalysisSettingsWindow
 from video_recorder import VideoRecorder
-from .video_playback_window import VideoPlaybackWindow
-from .video_analysis_settings_window import VideoAnalysisSettingsWindow
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QComboBox, 
                              QVBoxLayout, QHBoxLayout, QWidget, QLabel, QGroupBox, 
                              QGridLayout, QSizePolicy, QSpacerItem)
@@ -19,7 +16,6 @@ from PyQt5.QtGui import QIcon, QFont
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from video_utils import VideoUtils
-from video_analyzer import VideoAnalyzer
 
 
 class MainWindow(QMainWindow):
@@ -29,11 +25,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.utils = VideoUtils()
         self.video_recorder = VideoRecorder()
-        self.video_analyzer = VideoAnalyzer()  # 添加视频分析器
         self.preview_window = None
         self.settings_window = None
-        self.processing_window = None
-        self.analysis_settings_window = None  # 分析设置窗口
+        self.processing_window = None  # 添加处理窗口引用
         self.init_ui()
         
     def init_ui(self):
@@ -121,8 +115,8 @@ class MainWindow(QMainWindow):
         if not camera_index or camera_index == "未检测到摄像头":
             self.statusBar().showMessage("请选择有效的摄像头")
             return
-        # 创建预览窗口并传递视频分析器
-        self.preview_window = CameraPreviewWindow(camera_index, self.video_recorder, self.video_analyzer)
+            # 创建预览窗口
+        self.preview_window = CameraPreviewWindow(camera_index, self.video_recorder)
         self.preview_window.closed.connect(self.on_preview_closed)
         self.preview_window.show()
         self.statusBar().showMessage(f"已打开摄像头 {camera_index}")
@@ -153,6 +147,7 @@ class MainWindow(QMainWindow):
     def on_video_playback(self):
         """本地视频回放按钮点击事件"""
         if not hasattr(self, 'playback_window') or not self.playback_window:
+            from .video_playback_window import VideoPlaybackWindow
             self.playback_window = VideoPlaybackWindow(self)
             self.playback_window.show()
         else:
@@ -161,13 +156,4 @@ class MainWindow(QMainWindow):
     
     def on_video_analysis(self):
         """视频智能分析设置按钮点击事件"""
-        if not hasattr(self, 'analysis_settings_window') or not self.analysis_settings_window:
-            self.analysis_settings_window = VideoAnalysisSettingsWindow(self.video_analyzer, self)
-            self.analysis_settings_window.settings_changed.connect(self.handle_analysis_settings)
-            self.analysis_settings_window.show()
-        else:
-            self.analysis_settings_window.show()
-            self.analysis_settings_window.raise_()
-    def handle_analysis_settings(self, settings):
-        """处理分析设置变化"""
-        self.statusBar().showMessage(f"视频分析设置已更新: {settings}")
+        self.statusBar().showMessage("视频智能分析设置功能待实现")

@@ -61,8 +61,10 @@ class VideoProcessor(QObject):
             fourcc = cv2.VideoWriter_fourcc(*'XVID') if ext == "avi" else cv2.VideoWriter_fourcc(*'mp4v')
             
             # 创建输出文件名
+            # 获取原文件名（不带扩展名）
+            base_name = os.path.splitext(os.path.basename(input_file))[0]
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(self.save_path, f"processed_{timestamp}.{ext}")
+            output_file = os.path.join(self.save_path, f"{base_name}_{timestamp}.{ext}")
             
             # 获取原始视频信息
             original_fps = cap.get(cv2.CAP_PROP_FPS)

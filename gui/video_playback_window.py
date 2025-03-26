@@ -13,10 +13,8 @@ class VideoPlaybackWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Window)
         self.playback = VideoPlayback()
-        self.video_analyzer = parent.video_analyzer  # 获取父窗口的视频分析器
-        self.analyzed_frame = None
-        self.dual_view = False
         self.timer = QTimer(self)
+        self.current_frame = None  # 添加属性保存当前帧
         self.init_ui()
         self.setup_connections()
         
@@ -128,19 +126,8 @@ class VideoPlaybackWindow(QWidget):
         if self.playback.is_playing():
             frame = self.playback.get_frame()
             if frame is not None:
-                # 如果启用了分析且是回放分析
-                if self.video_analyzer.analyzing and hasattr(self, 'playback_analysis') and self.playback_analysis:
-                    self.analyzed_frame = self.video_analyzer.analyze_frame(frame)
-                    
-                # 双窗口显示
-                if self.dual_view and self.analyzed_frame is not None:
-                    self.display_dual_view(frame, self.analyzed_frame)
-                else:
-                    # 单窗口显示
-                    display_frame = self.analyzed_frame if (self.analyzed_frame is not None and 
-                                                          self.video_analyzer.analyzing) else frame
-                    self.display_single_view(display_frame)
-                    
+                self.current_frame = frame.copy()  # 保存当前帧的副本
+                self.display_frame(frame)
                 self.progress_slider.setValue(self.playback.get_position())
             else:
                 self.on_playback_end()
@@ -166,6 +153,13 @@ class VideoPlaybackWindow(QWidget):
         self.update_status("状态: 播放完成")
         self.playback.stop()
         
+    def resizeEvent(self, event):
+        """窗口大小变化事件"""
+        super().resizeEvent(event)
+        # 如果当前有视频帧，重新调整显示大小
+        if hasattr(self, 'current_frame') and self.current_frame is not None:
+            self.display_frame(self.current_frame)
+    
     def closeEvent(self, event):
         """窗口关闭事件"""
         self.playback.stop()

@@ -153,6 +153,7 @@ class VideoProcessingWindow(QWidget):
         )
         
         if success:
+            self.progress_bar.setValue(100)
             self.update_status(f"状态：处理完成，文件已保存到 {result}")
         else:
             self.update_status(f"状态：处理失败 - {result}")

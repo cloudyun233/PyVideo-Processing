@@ -10,13 +10,10 @@ class CameraPreviewWindow(QWidget):
     
     closed = pyqtSignal()  # 窗口关闭信号
     
-    def __init__(self, camera_index, video_recorder, video_analyzer):
+    def __init__(self, camera_index, video_recorder):
         super().__init__()
         self.camera_index = camera_index
         self.video_recorder = video_recorder
-        self.video_analyzer = video_analyzer
-        self.analyzed_frame = None
-        self.dual_view = False
         self.init_ui()
         self.init_camera()
         
@@ -86,49 +83,19 @@ class CameraPreviewWindow(QWidget):
             
         ret, frame = self.video_recorder.get_frame()
         if ret:
-            # 如果启用了分析且是实时分析
-            if self.video_analyzer.analyzing and hasattr(self, 'realtime_analysis') and self.realtime_analysis:
-                self.analyzed_frame = self.video_analyzer.analyze_frame(frame)
-                
-            # 双窗口显示
-            if self.dual_view and self.analyzed_frame is not None:
-                self.display_dual_view(frame, self.analyzed_frame)
-            else:
-                # 单窗口显示
-                display_frame = self.analyzed_frame if (self.analyzed_frame is not None and 
-                                                      self.video_analyzer.analyzing) else frame
-                self.display_single_view(display_frame)
-        
-    def display_single_view(self, frame):
-        """显示单窗口视图"""
-        h, w = frame.shape[:2]
-        bytes_per_line = 3 * w
-        q_img = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
-        pixmap = QPixmap.fromImage(q_img)
-        
-        scaled_pixmap = pixmap.scaled(
-            self.preview_label.size(), 
-            Qt.KeepAspectRatio, 
-            Qt.SmoothTransformation
-        )
-        self.preview_label.setPixmap(scaled_pixmap)
-
-    def display_dual_view(self, original_frame, analyzed_frame):
-        """显示双窗口视图"""
-        # 将两个帧水平拼接
-        combined_frame = cv2.hconcat([original_frame, analyzed_frame])
-        
-        h, w = combined_frame.shape[:2]
-        bytes_per_line = 3 * w
-        q_img = QImage(combined_frame.data, w, h, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
-        pixmap = QPixmap.fromImage(q_img)
-        
-        scaled_pixmap = pixmap.scaled(
-            self.preview_label.size(), 
-            Qt.KeepAspectRatio, 
-            Qt.SmoothTransformation
-        )
-        self.preview_label.setPixmap(scaled_pixmap)
+            # 转换为QPixmap并显示
+            h, w = frame.shape[:2]
+            bytes_per_line = 3 * w
+            q_img = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
+            pixmap = QPixmap.fromImage(q_img)
+            
+            # 缩放以适应标签大小，保持宽高比
+            scaled_pixmap = pixmap.scaled(
+                self.preview_label.size(), 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            )
+            self.preview_label.setPixmap(scaled_pixmap)
             
     def handle_frame(self, frame):
         """处理帧数据"""
