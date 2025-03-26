@@ -24,6 +24,8 @@ class VideoRecorder(QObject):
         self.output_format = "mp4"
         self.interval = 60
         self.file_prefix = "video"
+        self.frame_count = 0
+        self.start_time = 0
 
     def set_callbacks(self, frame_callback=None, status_callback=None):
         self.frame_callback = frame_callback
@@ -109,30 +111,97 @@ class VideoRecorder(QObject):
         self.recording = True
         self.recording_state_changed.emit(True)
         self.last_record_time = time.time()
+        self.start_time = time.time()
+        self.frame_count = 0
         self._update_status("录制中")
         return True
 
     def _create_writer(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{self.file_prefix}_{timestamp}.{self.output_format}"
-        return cv2.VideoWriter(
-            os.path.join(self.save_path, filename),
-            self.utils.get_fourcc(self.output_format),
-            self.cap.get(cv2.CAP_PROP_FPS),
-            (int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), 
-             int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))),
+        filepath = os.path.join(self.save_path, filename)
+        
+        # 确保目录存在
+        os.makedirs(self.save_path, exist_ok=True)
+        
+        # 获取摄像头参数
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        print(f"创建视频写入器: {filepath}, {width}x{height}, FPS: {fps}")  # 调试信息
+        
+        # 确保FPS是合理值
+        if fps <= 0:
+            fps = 30.0  # 默认值
+            
+        fourcc = cv2.VideoWriter_fourcc(*self._get_fourcc_code(self.output_format))
+        video_writer = cv2.VideoWriter(
+            filepath,
+            fourcc,
+            fps,
+            (width, height),
             isColor=True
         )
+        
+        # 验证视频写入器是否成功创建
+        if not video_writer.isOpened():
+            print(f"错误：无法创建视频写入器，路径: {filepath}")
+            return None
+            
+        return video_writer
+    
+    def _get_fourcc_code(self, output_format):
+        """根据输出格式返回合适的FourCC编码"""
+        format_map = {
+            "mp4": "H264",  # 使用H264编码器，更兼容Windows
+            "avi": "XVID",
+            "mov": "MJPG"
+        }
+        
+        # 尝试获取主要编码器，如果失败则尝试备选编码器
+        primary_codec = format_map.get(output_format.lower(), "H264")
+        try:
+            # 尝试创建主要编码器
+            fourcc = cv2.VideoWriter_fourcc(*primary_codec)
+            return primary_codec
+        except Exception as e:
+            print(f"警告：主要编码器 {primary_codec} 创建失败，尝试备选编码器")
+            # 备选编码器映射
+            fallback_map = {
+                "H264": ["avc1", "X264", "mp4v"],
+                "XVID": ["DIVX", "mp4v"],
+                "MJPG": ["mp4v"]
+            }
+            
+            # 尝试备选编码器
+            for codec in fallback_map.get(primary_codec, ["mp4v"]):
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    print(f"使用备选编码器: {codec}")
+                    return codec
+                except Exception:
+                    continue
+            
+            # 如果所有编码器都失败，返回最基本的编码器
+            print("所有编码器尝试失败，使用基本编码器 'mp4v'")
+            return "mp4v"
 
     def stop_recording(self):
         if not self.recording:
             return False
             
         if self.video_writer:
+            # 计算实际录制时长和帧率
+            elapsed_time = time.time() - self.start_time
+            actual_fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
+            print(f"录制完成：时长 {elapsed_time:.2f} 秒，总帧数 {self.frame_count}，实际帧率 {actual_fps:.2f}")
+            
             self.video_writer.release()
             self.video_writer = None
             
         self.recording = False
+        self.frame_count = 0
         self.recording_state_changed.emit(False)
         self._update_status("预览中")
         return True
@@ -146,10 +215,18 @@ class VideoRecorder(QObject):
             return False, None
 
         if self.recording:
-            self.video_writer.write(frame)
-            if time.time() - self.last_record_time >= self.interval:
-                if self._rotate_video_file(frame):
-                    self.last_record_time = time.time()
+            try:
+                if not self.video_writer.write(frame):
+                    print(f"警告：帧写入失败，当前帧计数：{self.frame_count}")
+                else:
+                    self.frame_count += 1
+                    
+                if time.time() - self.last_record_time >= self.interval:
+                    if self._rotate_video_file(frame):
+                        self.last_record_time = time.time()
+            except Exception as e:
+                print(f"错误：视频写入异常 - {str(e)}")
+                self.stop_recording()
 
         return True, frame
 

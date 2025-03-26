@@ -71,10 +71,25 @@ class VideoUtils:
     @staticmethod
     def get_fourcc(file_format):
         """根据文件格式获取适当的fourcc编码"""
-        if file_format.lower() == 'avi':
-            return cv2.VideoWriter_fourcc(*'XVID')
-        elif file_format.lower() == 'mp4':
-            return cv2.VideoWriter_fourcc(*'mp4v')
-        else:
-            # 默认使用mp4编码
+        try:
+            if file_format.lower() == 'avi':
+                return cv2.VideoWriter_fourcc(*'XVID')
+            elif file_format.lower() == 'mp4':
+                # 尝试使用H264编码器（更兼容Windows）
+                try:
+                    return cv2.VideoWriter_fourcc(*'H264')
+                except Exception:
+                    # 如果H264不可用，尝试其他常用编码器
+                    for codec in ['avc1', 'X264', 'mp4v']:
+                        try:
+                            return cv2.VideoWriter_fourcc(*codec)
+                        except Exception:
+                            continue
+                    # 如果所有尝试都失败，返回基本编码器
+                    return cv2.VideoWriter_fourcc(*'mp4v')
+            else:
+                # 默认使用mp4编码
+                return cv2.VideoWriter_fourcc(*'mp4v')
+        except Exception as e:
+            print(f"警告：编码器创建失败 - {str(e)}，使用基本编码器")
             return cv2.VideoWriter_fourcc(*'mp4v')
