@@ -2,7 +2,7 @@
 import os
 import cv2
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QLabel, QFileDialog, QSlider, QMessageBox)
+                             QLabel, QFileDialog, QSlider, QMessageBox, QCheckBox, QGroupBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 from video_playback import VideoPlayback
@@ -10,21 +10,39 @@ from video_playback import VideoPlayback
 class VideoPlaybackWindow(QWidget):
     """视频回放窗口"""
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, video_analyzer=None):
         super().__init__(parent, Qt.Window)
         self.playback = VideoPlayback()
+        self.video_analyzer = video_analyzer
         self.timer = QTimer(self)
-        self.current_frame = None  # 添加属性保存当前帧
+        self.current_frame = None
         self.init_ui()
         self.setup_connections()
         
     def init_ui(self):
         """初始化用户界面"""
         self.setWindowTitle("视频回放")
-        self.resize(800, 600)
+        self.resize(800, 700)  # 增加高度以容纳检测选项
         
         # 主布局
         main_layout = QVBoxLayout(self)
+        
+        # 检测选项组
+        detection_group = QGroupBox("检测选项")
+        detection_layout = QHBoxLayout(detection_group)
+        
+        self.face_check = QCheckBox("人脸检测")
+        self.person_check = QCheckBox("行人检测")
+        self.vehicle_check = QCheckBox("车辆检测")
+        self.analysis_btn = QPushButton("开始分析")
+        self.analysis_btn.setCheckable(True)
+        
+        detection_layout.addWidget(self.face_check)
+        detection_layout.addWidget(self.person_check)
+        detection_layout.addWidget(self.vehicle_check)
+        detection_layout.addWidget(self.analysis_btn)
+        
+        main_layout.addWidget(detection_group)
         
         # 视频选择区域
         self.select_button = QPushButton("选择视频文件")
@@ -62,6 +80,39 @@ class VideoPlaybackWindow(QWidget):
         main_layout.addWidget(self.progress_slider)
         main_layout.addLayout(control_layout)
         main_layout.addWidget(self.status_label)
+        
+        # 连接检测选项信号
+        self.analysis_btn.toggled.connect(self.toggle_analysis)
+        self.face_check.stateChanged.connect(self.update_detection_types)
+        self.person_check.stateChanged.connect(self.update_detection_types)
+        self.vehicle_check.stateChanged.connect(self.update_detection_types)
+    
+    def update_detection_types(self):
+        """更新检测类型"""
+        if not self.video_analyzer:
+            return
+            
+        detection_types = []
+        if self.face_check.isChecked():
+            detection_types.append('face')
+        if self.person_check.isChecked():
+            detection_types.append('person')
+        if self.vehicle_check.isChecked():
+            detection_types.append('vehicle')
+        
+        self.video_analyzer.set_detection_types(detection_types)
+    
+    def toggle_analysis(self, checked):
+        """切换分析状态"""
+        if not self.video_analyzer:
+            return
+            
+        if checked:
+            self.video_analyzer.start_analysis()
+            self.analysis_btn.setText("停止分析")
+        else:
+            self.video_analyzer.stop_analysis()
+            self.analysis_btn.setText("开始分析")
         
     def setup_connections(self):
         """设置信号和槽连接"""

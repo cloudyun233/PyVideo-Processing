@@ -22,7 +22,6 @@ class VideoAnalyzer(QObject):
         
         # GPU性能配置
         self.gpu_enabled = True  # 是否启用GPU
-        self.half_precision = False  # 是否使用半精度(FP16)
         self.batch_size = 1  # 批处理大小
         
         # 检测GPU是否可用
@@ -121,16 +120,9 @@ class VideoAnalyzer(QObject):
             if self.device.type == "cuda" and self.gpu_enabled:
                 self.yolo_model.to(self.device)
                 
-                # 如果启用半精度，转换模型为FP16
-                if self.half_precision:
-                    self.yolo_model.model.half()
-                    precision_str = "FP16半精度"
-                else:
-                    precision_str = "FP32全精度"
-                    
                 self.model_path = model_path
                 if self.status_callback:
-                    self.status_callback(f"状态：已加载模型 {model_name}，使用{device_str}推理，{precision_str}，批处理大小: {self.batch_size}")
+                    self.status_callback(f"状态：已加载模型 {model_name}，使用{device_str}推理，批处理大小: {self.batch_size}")
             else:
                 self.model_path = model_path
                 if self.status_callback:
@@ -149,6 +141,8 @@ class VideoAnalyzer(QObject):
             detection_types: 检测类型列表，可包含 'face', 'vehicle', 'person'
         """
         self.detection_types = detection_types
+        if self.status_callback:
+            self.status_callback(f"状态：检测类型已更新为 {', '.join(detection_types)}")
     
     def start_analysis(self):
         """开始视频分析"""
@@ -169,12 +163,11 @@ class VideoAnalyzer(QObject):
         if self.status_callback:
             self.status_callback("状态：视频分析已停止")
             
-    def set_gpu_config(self, enabled=True, half_precision=False, batch_size=1):
+    def set_gpu_config(self, enabled=True, batch_size=1):
         """设置GPU配置
         
         Args:
             enabled: 是否启用GPU
-            half_precision: 是否使用半精度(FP16)
             batch_size: 批处理大小
         """
         # 检查是否有可用的GPU
@@ -183,13 +176,12 @@ class VideoAnalyzer(QObject):
                 self.status_callback("状态：未检测到GPU，无法启用GPU加速")
             return False
             
-        old_config = (self.gpu_enabled, self.half_precision, self.batch_size)
+        old_config = (self.gpu_enabled, self.batch_size)
         self.gpu_enabled = enabled
-        self.half_precision = half_precision if enabled else False
         self.batch_size = batch_size if batch_size > 0 else 1
         
         # 如果配置发生变化且模型已加载，需要重新加载模型应用新配置
-        if old_config != (self.gpu_enabled, self.half_precision, self.batch_size) and self.yolo_model is not None:
+        if old_config != (self.gpu_enabled, self.batch_size) and self.yolo_model is not None:
             # 获取当前模型名称
             current_model = None
             for name, path in self.models.items():
@@ -204,8 +196,7 @@ class VideoAnalyzer(QObject):
         # 更新状态信息
         if self.status_callback:
             if enabled:
-                precision_str = "FP16半精度" if half_precision else "FP32全精度"
-                self.status_callback(f"状态：GPU加速已启用，{precision_str}，批处理大小: {batch_size}")
+                self.status_callback(f"状态：GPU加速已启用，批处理大小: {batch_size}")
             else:
                 self.status_callback("状态：GPU加速已禁用，将使用CPU运行")
                 
