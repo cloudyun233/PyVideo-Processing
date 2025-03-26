@@ -7,7 +7,7 @@ import time
 import threading
 from datetime import datetime
 
-from PyQt5.QtWidgets import (
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit, QHBoxLayout, QCheckBox, QSlider,
     QMainWindow, QWidget, QPushButton, QComboBox, QHBoxLayout, QVBoxLayout,
     QLabel, QDialog, QFileDialog, QLineEdit, QProgressBar, QMessageBox, QCheckBox,
     QListWidget, QListWidgetItem, QGroupBox, QFormLayout, QSpinBox, QApplication
@@ -395,7 +395,7 @@ class LocalVideoPlaybackDialog(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("本地视频回放")
-        self.resize(500, 400)
+        self.resize(1920, 1080)
         self.playback = VideoPlayback()
         self._init_ui()
         self.timer = QTimer()
@@ -419,12 +419,10 @@ class LocalVideoPlaybackDialog(QDialog):
       
         # 播放控制按钮
         ctrl_layout = QHBoxLayout()
-        self.btn_pause = QPushButton("暂停")
+        self.btn_pause = QPushButton("暂停/继续")
         self.btn_stop = QPushButton("停止")
-        self.btn_fast_forward = QPushButton("快进")
         ctrl_layout.addWidget(self.btn_pause)
         ctrl_layout.addWidget(self.btn_stop)
-        ctrl_layout.addWidget(self.btn_fast_forward)
         layout.addLayout(ctrl_layout)
       
         # 检测复选框
@@ -438,6 +436,12 @@ class LocalVideoPlaybackDialog(QDialog):
         layout.addLayout(check_layout)
       
         # 视频显示区域
+        # 进度条
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.sliderMoved.connect(self.seek_video)
+        layout.addWidget(self.slider)
+
         self.video_label = QLabel("视频回放")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet("background-color: black;")
@@ -446,7 +450,7 @@ class LocalVideoPlaybackDialog(QDialog):
         # 连接按钮
         self.btn_pause.clicked.connect(self.toggle_pause)
         self.btn_stop.clicked.connect(self.stop_play)
-        self.btn_fast_forward.clicked.connect(self.fast_forward)
+
       
         # 初始化视频分析器（回放时也支持检测）
         self.analyzer = VideoAnalyzer()
@@ -477,6 +481,9 @@ class LocalVideoPlaybackDialog(QDialog):
         if frame is None:
             self.timer.stop()
             return
+        # 更新进度条
+        self.slider.setMaximum(self.playback.get_duration())
+        self.slider.setValue(self.playback.get_position())
         # 如果检测开启，则调用分析
         if len(self.analyzer.detection_types) > 0:
             frame = self.analyzer.analyze_frame(frame)
@@ -487,9 +494,12 @@ class LocalVideoPlaybackDialog(QDialog):
         if self.playback.paused:
             self.playback.play()
             self.btn_pause.setText("暂停")
+            if not self.timer.isActive():
+                self.timer.start(30)
         else:
             self.playback.pause()
             self.btn_pause.setText("播放")
+            self.timer.stop()
   
     def stop_play(self):
         self.playback.stop()
@@ -516,6 +526,9 @@ class LocalVideoPlaybackDialog(QDialog):
         else:
             self.analyzer.stop_analysis()
   
+    def seek_video(self, position):
+        self.playback.seek(position)
+
     def closeEvent(self, event):
         self.stop_play()
         event.accept()
