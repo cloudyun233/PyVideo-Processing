@@ -99,11 +99,11 @@ class VideoAnalyzer(QObject):
             return
 
         for file in os.listdir(self.models_dir):
-            if file.endswith(".pt") and "yolov8" in file.lower():
+            if file.endswith(".pt") and "yolo" in file.lower():
                 self.models[file] = os.path.join(self.models_dir, file)
 
         if not self.models and self.status_callback:
-            self.status_callback("状态：未找到YOLOv8模型")
+            self.status_callback("状态：未找到YOLO模型")
 
     def get_available_models(self):
         """获取可用的 YOLOv8 模型列表"""
