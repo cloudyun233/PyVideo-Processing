@@ -7,7 +7,7 @@ import time
 import threading
 from datetime import datetime
 
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit, QHBoxLayout, QCheckBox, QSlider,
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit, QHBoxLayout, QCheckBox, QSlider, QDesktopWidget,
     QMainWindow, QWidget, QPushButton, QComboBox, QHBoxLayout, QVBoxLayout,
     QLabel, QDialog, QFileDialog, QLineEdit, QProgressBar, QMessageBox, QCheckBox,
     QListWidget, QListWidgetItem, QGroupBox, QFormLayout, QSpinBox, QApplication
@@ -44,7 +44,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("视频处理系统")
-        self.setGeometry(100, 100, 400, 300)
+        screen = QDesktopWidget().screenGeometry()
+        width = 640
+        height = 360
+        self.setGeometry((screen.width() - width) // 2, (screen.height() - height) // 2, width, height)
         self._init_ui()
 
     def _init_ui(self):
@@ -119,7 +122,7 @@ class OpenCameraDialog(QDialog):
         self.setWindowTitle("摄像头预览及实时检测")
         self.recorder = recorder
         self.camera_index = int(camera_index)
-        self.resize(800, 600)
+        self.resize(1280, 720)
       
         # 后端视频分析器（实时检测）
         self.analyzer = VideoAnalyzer()
@@ -242,7 +245,7 @@ class VideoRecordSettingsDialog(QDialog):
         # 存储间隔：单位秒，示例采用60s和300s（1分钟和5分钟）
         self.interval_spin = QSpinBox()
         self.interval_spin.setRange(10, 3600)
-        self.interval_spin.setValue(60)
+        self.interval_spin.setValue(30)
         layout.addRow("存储间隔（秒）：", self.interval_spin)
       
         # 录制格式选择
