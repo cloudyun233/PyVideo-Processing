@@ -1,6 +1,7 @@
 # video_utils.py
 import cv2
 import os
+import platform
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
 
@@ -21,7 +22,10 @@ class VideoUtils:
         """
         available = []
         for i in range(max_index):
-            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            if platform.system() == 'Windows':
+                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(i)
             if cap.isOpened():
                 available.append(str(i))
                 cap.release()

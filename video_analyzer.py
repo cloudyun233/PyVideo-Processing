@@ -22,7 +22,6 @@ class VideoAnalyzer(QObject):
 
         # GPU 配置
         self.gpu_enabled = True  # 默认启用 GPU
-        self.batch_size = 1  # 批处理大小
 
         # 检测可用设备
         self.device = self._detect_device()
@@ -163,18 +162,17 @@ class VideoAnalyzer(QObject):
         if self.status_callback:
             self.status_callback("状态：视频分析已停止")
 
-    def set_gpu_config(self, enabled=True, batch_size=1):
+    def set_gpu_config(self, enabled=True):
         """设置 GPU 配置"""
         if enabled and self.device.type != "cuda":
             if self.status_callback:
                 self.status_callback("状态：未检测到GPU，无法启用GPU加速")
             return False
 
-        old_config = (self.gpu_enabled, self.batch_size)
+        old_config = self.gpu_enabled
         self.gpu_enabled = enabled
-        self.batch_size = max(batch_size, 1)
 
-        if old_config != (self.gpu_enabled, self.batch_size) and self.yolo_model:
+        if old_config != self.gpu_enabled and self.yolo_model:
             current_model = next(
                 (name for name, path in self.models.items() if path == self.model_path), None
             )
@@ -183,7 +181,7 @@ class VideoAnalyzer(QObject):
 
         if self.status_callback:
             self.status_callback(
-                f"状态：GPU加速已{'启用' if enabled else '禁用'}，批处理大小: {self.batch_size}"
+                f"状态：GPU加速已{'启用' if enabled else '禁用'}"
             )
         return True
 
@@ -227,7 +225,7 @@ class VideoAnalyzer(QObject):
                     resized_frame = future.result()
 
                 device_to_use = self.device if self.gpu_enabled and self.device.type == "cuda" else torch.device("cpu")
-                results = self.yolo_model(resized_frame, device=device_to_use, batch=self.batch_size)
+                results = self.yolo_model(resized_frame, device=device_to_use)
 
                 for result in results:
                     boxes = result.boxes.cpu().numpy()
